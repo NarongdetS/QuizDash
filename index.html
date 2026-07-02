@@ -53,6 +53,9 @@
 <body>
 <div id="app"></div>
 <script src="./data/questions.general.js"></script>
+<script src="./data/questions.sports.js"></script>
+<script src="./data/questions.entertainment.js"></script>
+<script src="./data/questions.science.js"></script>
 <script>
 (function () {
   'use strict';
@@ -63,9 +66,9 @@
 
   var CATEGORIES = [
     { id: 'general', name: 'ความรู้ทั่วไป', icon: '🧠', locked: false },
-    { id: 'sports', name: 'กีฬา', icon: '⚽', locked: true },
-    { id: 'entertainment', name: 'บันเทิง', icon: '🎬', locked: true },
-    { id: 'science', name: 'วิทยาศาสตร์', icon: '🔬', locked: true },
+    { id: 'sports', name: 'กีฬา', icon: '⚽', locked: false },
+    { id: 'entertainment', name: 'บันเทิง', icon: '🎬', locked: false },
+    { id: 'science', name: 'วิทยาศาสตร์', icon: '🔬', locked: false },
   ];
 
   // จำนวนคำถามต่อหนึ่งเกม (สุ่มจากคลังของหมวดที่เลือก)
