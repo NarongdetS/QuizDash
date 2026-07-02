@@ -55,6 +55,7 @@
 </head>
 <body>
 <div id="app"></div>
+<script src="./config.js"></script>
 <script src="./data/questions.general.js"></script>
 <script src="./data/questions.sports.js"></script>
 <script src="./data/questions.entertainment.js"></script>
@@ -105,6 +106,11 @@
       challengeSeed: null,
       challengeTarget: null,
       challengeBy: '',
+      lbSubmitted: false,
+      lbSubmitting: false,
+      lbLoading: false,
+      lbEntries: [],
+      lbError: '',
     };
   }
 
@@ -131,6 +137,33 @@
   var LS_KEY = 'quizdash.v1';
   function loadStore() { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (e) { return {}; } }
   function saveStore(s) { try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch (e) {} }
+
+  // Leaderboard adapter — provider เลือกอัตโนมัติ: มี config Supabase = 'supabase', ไม่มี = 'local' (localStorage)
+  // interface เป็น Promise ทั้งคู่ → UI เดียวกัน (ดู LEADERBOARD-SETUP.md)
+  var LB_KEY = 'quizdash.lb';
+  var Leaderboard = (function () {
+    var cfg = window.QUIZDASH_CONFIG || {};
+    var useSupabase = !!(cfg.supabaseUrl && cfg.supabaseKey);
+    function localTop(limit) { try { return Promise.resolve((JSON.parse(localStorage.getItem(LB_KEY)) || []).slice(0, limit)); } catch (e) { return Promise.resolve([]); } }
+    function localSubmit(e) {
+      try {
+        var a = JSON.parse(localStorage.getItem(LB_KEY)) || [];
+        a.push(e); a.sort(function (x, y) { return y.score - x.score; });
+        localStorage.setItem(LB_KEY, JSON.stringify(a.slice(0, 100)));
+      } catch (_) {}
+      return Promise.resolve();
+    }
+    function sbHeaders() { return { apikey: cfg.supabaseKey, Authorization: 'Bearer ' + cfg.supabaseKey, 'Content-Type': 'application/json' }; }
+    function sbTop(limit) {
+      return fetch(cfg.supabaseUrl + '/rest/v1/scores?select=name,score,mode,category,created_at&order=score.desc&limit=' + limit, { headers: sbHeaders() })
+        .then(function (r) { if (!r.ok) throw 0; return r.json(); });
+    }
+    function sbSubmit(e) {
+      return fetch(cfg.supabaseUrl + '/rest/v1/scores', { method: 'POST', headers: Object.assign(sbHeaders(), { Prefer: 'return=minimal' }), body: JSON.stringify(e) })
+        .then(function (r) { if (!r.ok) throw 0; });
+    }
+    return { mode: useSupabase ? 'supabase' : 'local', top: useSupabase ? sbTop : localTop, submit: useSupabase ? sbSubmit : localSubmit };
+  })();
   function dateStr(d) { d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   function prevDateStr() { var d = new Date(); d.setDate(d.getDate() - 1); return dateStr(d); }
 
@@ -320,7 +353,7 @@
   }
 
   function shareChallenge() {
-    var input = document.getElementById('challenge-name');
+    var input = document.getElementById('player-name');
     var name = input ? input.value.trim().slice(0, 20) : '';
     var store = loadStore();
     if (name) { store.name = name; saveStore(store); }
@@ -405,6 +438,25 @@
     setState(function (s) { return { reviewOpen: !s.reviewOpen }; });
   }
 
+  function showLeaderboard() {
+    setState({ screen: 'leaderboard', lbLoading: true, lbError: '', lbEntries: [] });
+    Leaderboard.top(20)
+      .then(function (list) { setState({ lbLoading: false, lbEntries: list || [] }); })
+      .catch(function () { setState({ lbLoading: false, lbError: 'โหลดกระดานไม่สำเร็จ' }); });
+  }
+
+  function submitScore() {
+    if (state.lbSubmitted || state.lbSubmitting) return;
+    var input = document.getElementById('player-name');
+    var name = (input ? input.value.trim().slice(0, 20) : '') || (loadStore().name || '');
+    if (!name) { showToast('ใส่ชื่อก่อนนะ 🙂'); return; }
+    var s = loadStore(); s.name = name; saveStore(s);
+    setState({ lbSubmitting: true });
+    Leaderboard.submit({ name: name, score: state.score, mode: state.mode, category: state.mode === 'normal' ? state.category : state.mode })
+      .then(function () { setState({ lbSubmitted: true, lbSubmitting: false }); showToast('ส่งขึ้นกระดานแล้ว! 🏆'); })
+      .catch(function () { setState({ lbSubmitting: false }); showToast('ส่งไม่สำเร็จ ลองใหม่'); });
+  }
+
   function shareScore() {
     var text;
     if (state.mode === 'daily') {
@@ -480,6 +532,7 @@
           '<div class="action-btn clickable btn-primary" data-action="start-daily" style="color:#ff7a00;font-weight:700">' + dailyLabel + '</div>' +
           '<div class="action-btn clickable btn-primary" data-action="start-challenge" style="color:#d6408f;font-weight:700">ท้าเพื่อน 🥊</div>' +
         '</div>' +
+        '<div class="action-btn clickable btn-primary" data-action="show-leaderboard" style="color:#f59e0b;font-weight:700">อันดับ 🏆</div>' +
       '</div>'
     );
   }
@@ -600,20 +653,20 @@
         '</div>';
     }
 
-    // บล็อกปุ่มล่าง: โหมด challenge = ช่องใส่ชื่อ + แชร์คำท้า, โหมดอื่น = แชร์คะแนน
+    // บล็อกปุ่มล่าง: ช่องใส่ชื่อ (ใช้ร่วมทั้งส่งคะแนน+แชร์คำท้า) + ส่งขึ้นกระดาน + แชร์ + ดูเฉลย
     var savedName = (loadStore().name || '');
-    var actionsHtml = isChallenge
-      ? '<div class="restart-btn clickable btn-primary" data-action="restart">เล่นเกมอื่น 🏠</div>' +
-        '<input id="challenge-name" class="name-input" type="text" maxlength="20" placeholder="ใส่ชื่อคุณ (ไม่บังคับ)" value="' + esc(savedName) + '">' +
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
-          '<div class="action-btn clickable btn-primary" data-action="share-challenge" style="color:#d6408f;font-weight:700">แชร์คำท้า 🥊</div>' +
-          '<div class="action-btn clickable btn-primary" data-action="toggle-review" style="color:#2dd4bf">ดูเฉลย 📋</div>' +
-        '</div>'
-      : '<div class="restart-btn clickable btn-primary" data-action="restart">เล่นอีกครั้ง 🔁</div>' +
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
-          '<div class="action-btn clickable btn-primary" data-action="share" style="color:#8b5cf6">แชร์คะแนน 📤</div>' +
-          '<div class="action-btn clickable btn-primary" data-action="toggle-review" style="color:#2dd4bf">ดูเฉลย 📋</div>' +
-        '</div>';
+    var submitLabel = state.lbSubmitted ? '✓ ส่งขึ้นกระดานแล้ว' : state.lbSubmitting ? 'กำลังส่ง…' : 'ส่งขึ้นกระดาน 🏆';
+    var submitStyle = state.lbSubmitted ? 'color:#9aa5b8' : 'color:#f59e0b;font-weight:700';
+    var restartBtn = '<div class="restart-btn clickable btn-primary" data-action="restart">' + (isChallenge ? 'เล่นเกมอื่น 🏠' : 'เล่นอีกครั้ง 🔁') + '</div>';
+    var nameInputHtml = '<input id="player-name" class="name-input" type="text" maxlength="20" placeholder="ใส่ชื่อคุณ (ไม่บังคับ)" value="' + esc(savedName) + '">';
+    var submitBtn = '<div class="action-btn clickable btn-primary" data-action="submit-score" style="' + submitStyle + '">' + submitLabel + '</div>';
+    var shareBtn = isChallenge
+      ? '<div class="action-btn clickable btn-primary" data-action="share-challenge" style="color:#d6408f;font-weight:700">แชร์คำท้า 🥊</div>'
+      : '<div class="action-btn clickable btn-primary" data-action="share" style="color:#8b5cf6">แชร์คะแนน 📤</div>';
+    var reviewBtn = '<div class="action-btn clickable btn-primary" data-action="toggle-review" style="color:#2dd4bf">ดูเฉลย 📋</div>';
+    var actionsHtml = restartBtn + nameInputHtml +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' + submitBtn + shareBtn + '</div>' +
+      reviewBtn;
 
     return (
       '<div style="display:flex;flex-direction:column;gap:clamp(10px,2.6vw,14px)">' +
@@ -645,9 +698,47 @@
     );
   }
 
+  function renderLeaderboard() {
+    var listHtml;
+    if (state.lbLoading) {
+      listHtml = '<div style="text-align:center;color:#8b7a9e;padding:24px 0;font-family:\'Mitr\',sans-serif">กำลังโหลด…</div>';
+    } else if (state.lbError) {
+      listHtml = '<div style="text-align:center;color:#e11d48;padding:16px 0">' + esc(state.lbError) + '</div>' +
+        '<div class="action-btn clickable btn-primary" data-action="show-leaderboard" style="color:#f59e0b;font-weight:700">ลองใหม่ 🔄</div>';
+    } else if (!state.lbEntries.length) {
+      listHtml = '<div style="text-align:center;color:#8b7a9e;padding:24px 0">ยังไม่มีคะแนน มาเป็นคนแรกกันเถอะ! 🎯</div>';
+    } else {
+      listHtml = state.lbEntries.map(function (e, i) {
+        var rank = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1) + '.';
+        return '<div class="review-item" style="display:flex;align-items:center;gap:10px">' +
+            '<div class="heading" style="min-width:28px;text-align:center;font-size:clamp(14px,3.8vw,17px);color:#d6408f">' + rank + '</div>' +
+            '<div style="flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(e.name || '—') + '</div>' +
+            '<div class="heading" style="color:#ff5da2;font-size:clamp(14px,3.8vw,17px)">' + e.score + '</div>' +
+          '</div>';
+      }).join('');
+    }
+
+    var testBadge = Leaderboard.mode === 'local'
+      ? '<div style="text-align:center;font-size:clamp(11px,2.8vw,12px);color:#8b7a9e;background:#fff;border-radius:12px;padding:8px 12px;box-shadow:0 4px 0 rgba(0,0,0,.04)">🧪 โหมดทดลอง — คะแนนเก็บในเครื่องนี้ (ดู LEADERBOARD-SETUP.md เพื่อต่อ Supabase)</div>'
+      : '';
+
+    return (
+      '<div style="display:flex;flex-direction:column;gap:clamp(10px,2.6vw,14px)">' +
+        '<div style="text-align:center;padding-top:4px">' +
+          '<div style="font-size:clamp(40px,10vw,52px)">🏆</div>' +
+          '<div class="heading" style="font-size:clamp(20px,5vw,24px);color:#d6408f;margin-top:4px">อันดับคะแนนสูงสุด</div>' +
+        '</div>' +
+        testBadge +
+        '<div style="display:flex;flex-direction:column;gap:8px">' + listHtml + '</div>' +
+        '<div class="restart-btn clickable btn-primary" data-action="restart">← กลับ</div>' +
+      '</div>'
+    );
+  }
+
   function render() {
     var body = state.screen === 'start' ? renderStart()
       : state.screen === 'question' ? renderQuestion()
+      : state.screen === 'leaderboard' ? renderLeaderboard()
       : renderSummary();
 
     var toastHtml = state.toastMsg
@@ -669,6 +760,8 @@
     else if (action === 'select-category') selectCategory(el.getAttribute('data-cat'));
     else if (action === 'answer') handleAnswer(parseInt(el.getAttribute('data-index'), 10));
     else if (action === 'restart') restart();
+    else if (action === 'show-leaderboard') showLeaderboard();
+    else if (action === 'submit-score') submitScore();
     else if (action === 'share') shareScore();
     else if (action === 'share-challenge') shareChallenge();
     else if (action === 'toggle-review') toggleReview();
