@@ -85,6 +85,7 @@
   function createInitialGameState() {
     return {
       screen: 'start',
+      mode: 'normal',
       category: 'general',
       deck: [],
       qIndex: 0,
@@ -120,24 +121,53 @@
     return Math.round(100 + 100 * ratio);
   }
 
-  // Fisher–Yates shuffle (คืนอาร์เรย์ใหม่ ไม่แก้ของเดิม)
-  function shuffle(arr) {
+  // ---- Persistent storage (localStorage) + date helpers ----
+  var LS_KEY = 'quizdash.v1';
+  function loadStore() { try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (e) { return {}; } }
+  function saveStore(s) { try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch (e) {} }
+  function dateStr(d) { d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  function prevDateStr() { var d = new Date(); d.setDate(d.getDate() - 1); return dateStr(d); }
+
+  // Seeded PRNG (xfnv1a hash → mulberry32) — deck ของ seed เดียวกันจะ identical ทุกเครื่อง
+  function makeRng(seedStr) {
+    var h = 1779033703 ^ seedStr.length;
+    for (var i = 0; i < seedStr.length; i++) { h = Math.imul(h ^ seedStr.charCodeAt(i), 3432918353); h = h << 13 | h >>> 19; }
+    var a = h >>> 0;
+    return function () {
+      a |= 0; a = a + 0x6D2B79F5 | 0;
+      var t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  // Fisher–Yates shuffle (คืนอาร์เรย์ใหม่ ไม่แก้ของเดิม) — rng ไม่ระบุ = Math.random (สุ่มปกติ)
+  function shuffle(arr, rng) {
+    rng = rng || Math.random;
     var a = arr.slice();
     for (var i = a.length - 1; i > 0; i--) {
-      var j = Math.floor(Math.random() * (i + 1));
+      var j = Math.floor(rng() * (i + 1));
       var t = a[i]; a[i] = a[j]; a[j] = t;
     }
     return a;
   }
 
-  // สร้างชุดคำถามสำหรับหนึ่งเกม: สุ่มคำถามจากคลังของหมวดที่เลือก + สลับลำดับตัวเลือกในแต่ละข้อ
+  // รวมคำถามจากทุกหมวด (ใช้กับ Daily Challenge)
+  function allQuestions() {
+    var out = [];
+    CATEGORIES.forEach(function (c) { out = out.concat(questionBank(c.id)); });
+    return out;
+  }
+
+  // สร้างชุดคำถามสำหรับหนึ่งเกม: สุ่มคำถาม + สลับลำดับตัวเลือกในแต่ละข้อ
   // (คำนวณ correct index ใหม่ตามตำแหน่งที่สลับแล้ว) — เก็บ id ติดไว้ใช้กับ daily challenge/สถิติ
-  function buildDeck() {
-    var bank = questionBank(state.category);
-    var picked = shuffle(bank).slice(0, Math.min(QUESTIONS_PER_GAME, bank.length));
+  // rng ระบุ = โหมด daily (สุ่มรวมทุกหมวดแบบ seeded ให้เหมือนกันทุกเครื่อง), ไม่ระบุ = หมวดที่เลือก (สุ่มปกติ)
+  function buildDeck(rng) {
+    var bank = rng ? allQuestions() : questionBank(state.category);
+    var picked = shuffle(bank, rng).slice(0, Math.min(QUESTIONS_PER_GAME, bank.length));
     return picked.map(function (q) {
       var correctText = q.options[q.correct];
-      var options = shuffle(q.options);
+      var options = shuffle(q.options, rng);
       return { id: q.id, text: q.text, options: options, correct: options.indexOf(correctText) };
     });
   }
@@ -223,7 +253,17 @@
     clearTimer();
     playSound('click');
     var cat = state.category;
-    setState(Object.assign({}, createInitialGameState(), { category: cat, screen: 'question', qEnter: false, deck: buildDeck() }));
+    setState(Object.assign({}, createInitialGameState(), { category: cat, mode: 'normal', screen: 'question', qEnter: false, deck: buildDeck() }));
+    setTimeout(function () { setState({ qEnter: true }); }, 30);
+    startTimer();
+  }
+
+  function startDaily() {
+    if (!allQuestions().length) return;
+    clearTimer();
+    playSound('click');
+    var rng = makeRng('daily-' + dateStr()); // seed = วันที่ → ทุกคนได้ชุดเดียวกัน
+    setState(Object.assign({}, createInitialGameState(), { mode: 'daily', screen: 'question', qEnter: false, deck: buildDeck(rng) }));
     setTimeout(function () { setState({ qEnter: true }); }, 30);
     startTimer();
   }
@@ -255,11 +295,31 @@
     advanceTimeout = setTimeout(nextQuestion, 1500);
   }
 
+  // บันทึกผล daily + อัปเดต streak (นับครั้งเดียวต่อวัน) คืนค่า streak ปัจจุบัน
+  function recordDaily() {
+    var store = loadStore();
+    var today = dateStr();
+    if (store.daily && store.daily.lastCompletedDate === today) {
+      return store.streak || { current: 0, best: 0 }; // ทำ daily ของวันนี้ไปแล้ว — เล่นซ้ำได้แต่ไม่นับเพิ่ม
+    }
+    var st = store.streak || { current: 0, best: 0, lastDate: null };
+    if (st.lastDate === prevDateStr()) st.current += 1;
+    else st.current = 1; // ขาดวัน (หรือครั้งแรก) → เริ่มนับใหม่
+    st.lastDate = today;
+    st.best = Math.max(st.best || 0, st.current);
+    store.streak = st;
+    store.daily = { lastCompletedDate: today, lastScore: state.score, lastCorrect: state.correctCount };
+    saveStore(store);
+    return st;
+  }
+
   function nextQuestion() {
     var isLast = state.qIndex >= state.deck.length - 1;
     if (isLast) {
       playSound('win');
-      setState({ screen: 'summary' });
+      var patch = { screen: 'summary' };
+      if (state.mode === 'daily') patch.dailyStreak = recordDaily().current;
+      setState(patch);
     } else {
       setState(function (s) {
         return { qIndex: s.qIndex + 1, selected: null, locked: false, timeLeft: TIME_PER_Q, lastGained: null, qEnter: false };
@@ -279,7 +339,13 @@
   }
 
   function shareScore() {
-    var text = 'ฉันได้ ' + state.score + ' คะแนน ตอบถูก ' + state.correctCount + '/' + state.deck.length + ' ข้อ ในเกม Trivia จับเวลา! 🎉';
+    var text;
+    if (state.mode === 'daily') {
+      text = 'ชาเลนจ์ประจำวัน ' + dateStr() + ' ฉันได้ ' + state.score + ' คะแนน ตอบถูก ' + state.correctCount + '/' + state.deck.length + ' ข้อ'
+        + (state.dailyStreak ? ' 🔥 สตรีค ' + state.dailyStreak + ' วัน' : '') + ' ในเกม Trivia จับเวลา!';
+    } else {
+      text = 'ฉันได้ ' + state.score + ' คะแนน ตอบถูก ' + state.correctCount + '/' + state.deck.length + ' ข้อ ในเกม Trivia จับเวลา! 🎉';
+    }
     if (navigator.share) {
       navigator.share({ title: 'Timed Trivia', text: text }).catch(function () {});
     } else if (navigator.clipboard) {
@@ -297,6 +363,20 @@
   }
 
   function renderStart() {
+    var store = loadStore();
+    var streak = store.streak || { current: 0, best: 0 };
+    var dailyDoneToday = !!(store.daily && store.daily.lastCompletedDate === dateStr());
+
+    var streakHtml = streak.current > 0
+      ? '<div style="display:flex;justify-content:center;margin-top:8px">' +
+          '<div class="heading" style="background:#fff;border-radius:999px;padding:6px 16px;font-weight:600;font-size:clamp(12.5px,3.2vw,14px);color:#ff7a00;box-shadow:0 4px 0 rgba(0,0,0,.05)">' +
+            '🔥 สตรีค ' + streak.current + ' วัน' + (streak.best > streak.current ? ' · สูงสุด ' + streak.best : '') +
+          '</div>' +
+        '</div>'
+      : '';
+
+    var dailyLabel = dailyDoneToday ? '✓ ทำแล้ววันนี้ · เล่นซ้ำได้' : 'ชาเลนจ์ประจำวัน 📅';
+
     var catsHtml = CATEGORIES.map(function (c) {
       var isSelected = c.id === state.category;
       var border = isSelected ? '2px solid #d6408f' : '2px solid transparent';
@@ -318,10 +398,12 @@
           '<div style="font-size:clamp(38px,10vw,52px);line-height:1">🎉</div>' +
           '<div class="heading" style="font-size:clamp(26px,7vw,34px);color:#d6408f;margin-top:8px">Trivia จับเวลา</div>' +
           '<div style="font-size:clamp(13px,3.4vw,15px);color:#6b5c7f;margin-top:6px">ตอบให้ไว ได้คะแนนเยอะ!</div>' +
+          streakHtml +
         '</div>' +
         '<div class="heading" style="font-weight:600;font-size:clamp(13px,3.4vw,15px);color:#6b5c7f">เลือกหมวดหมู่</div>' +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:clamp(10px,2.6vw,14px)">' + catsHtml + '</div>' +
         '<div class="start-btn clickable btn-primary" data-action="start">เริ่มเกม 🚀</div>' +
+        '<div class="action-btn clickable btn-primary" data-action="start-daily" style="color:#ff7a00;font-weight:700">' + dailyLabel + '</div>' +
       '</div>'
     );
   }
@@ -417,12 +499,22 @@
       reviewHtml = '<div style="display:flex;flex-direction:column;gap:8px;margin-top:2px;animation:slideUpFade .3s ease">' + itemsHtml + '</div>';
     }
 
+    var isDaily = state.mode === 'daily';
+    var headTitle = isDaily ? 'ชาเลนจ์ประจำวัน 🗓️' : 'สรุปผล!';
+    var streakCardHtml = isDaily && state.dailyStreak
+      ? '<div class="summary-stat" style="background:linear-gradient(135deg,#fff4e6,#ffe8cc)">' +
+          '<div class="heading" style="font-size:clamp(18px,4.6vw,22px);color:#ff7a00">🔥 ' + state.dailyStreak + ' วัน</div>' +
+          '<div style="font-size:clamp(11px,2.8vw,12px);color:#b06a1e">สตรีคต่อเนื่อง</div>' +
+        '</div>'
+      : '';
+
     return (
       '<div style="display:flex;flex-direction:column;gap:clamp(10px,2.6vw,14px)">' +
         '<div style="text-align:center;padding-top:4px;animation:bounceIn .5s ease">' +
           '<div style="font-size:clamp(40px,10vw,52px)">🏆</div>' +
-          '<div class="heading" style="font-size:clamp(20px,5vw,24px);color:#d6408f;margin-top:4px">สรุปผล!</div>' +
+          '<div class="heading" style="font-size:clamp(20px,5vw,24px);color:#d6408f;margin-top:4px">' + headTitle + '</div>' +
         '</div>' +
+        streakCardHtml +
         '<div class="summary-score">' +
           '<div class="heading" style="font-size:clamp(34px,9vw,44px);color:#ff5da2">' + state.score + '</div>' +
           '<div style="font-size:clamp(12px,3vw,13px);color:#8b7a9e;margin-top:2px">คะแนนรวม</div>' +
@@ -467,6 +559,7 @@
     if (!el) return;
     var action = el.getAttribute('data-action');
     if (action === 'start') startGame();
+    else if (action === 'start-daily') startDaily();
     else if (action === 'select-category') selectCategory(el.getAttribute('data-cat'));
     else if (action === 'answer') handleAnswer(parseInt(el.getAttribute('data-index'), 10));
     else if (action === 'restart') restart();
