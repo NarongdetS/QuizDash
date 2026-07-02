@@ -45,6 +45,9 @@
   .restart-btn{background:linear-gradient(135deg,#ff5da2,#ff8bc4);color:#fff;text-align:center;padding:clamp(14px,3.4vw,16px);border-radius:16px;font-family:'Mitr',sans-serif;font-weight:700;font-size:clamp(14px,3.6vw,15.5px);box-shadow:0 6px 0 #d6408f}
   .action-btn{background:#fff;text-align:center;padding:clamp(12px,3vw,14px);border-radius:16px;font-family:'Mitr',sans-serif;font-weight:600;font-size:clamp(12.5px,3.2vw,14px);box-shadow:0 5px 0 rgba(0,0,0,.05)}
   .review-item{background:#fff;border-radius:14px;padding:12px 14px;font-size:clamp(11.5px,3vw,13px);color:#3d2c52}
+  .name-input{width:100%;box-sizing:border-box;background:#fff;border:2px solid #ffd6ea;border-radius:16px;padding:clamp(11px,3vw,13px) 14px;font-family:'Sarabun',sans-serif;font-size:clamp(13px,3.4vw,15px);color:#3d2c52;outline:none;text-align:center}
+  .name-input:focus{border-color:#ff5da2}
+  .name-input::placeholder{color:#c3b8d6}
 
   .toast{position:fixed;left:0;right:0;bottom:24px;display:flex;justify-content:center;animation:bounceIn .3s ease;pointer-events:none}
   .toast-inner{background:#3d2c52;color:#fff;padding:10px 20px;border-radius:14px;font-size:13px;font-family:'Mitr',sans-serif}
@@ -98,7 +101,10 @@
       lastGained: null,
       qEnter: true,
       reviewOpen: false,
-      shareToast: false,
+      toastMsg: '',
+      challengeSeed: null,
+      challengeTarget: null,
+      challengeBy: '',
     };
   }
 
@@ -127,6 +133,20 @@
   function saveStore(s) { try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch (e) {} }
   function dateStr(d) { d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   function prevDateStr() { var d = new Date(); d.setDate(d.getDate() - 1); return dateStr(d); }
+
+  // คำท้าที่มากับ URL (?ch=seed&s=score&by=name) — อ่านครั้งเดียวตอนโหลด
+  var pendingChallenge = null;
+  (function () {
+    try {
+      var p = new URLSearchParams(location.search), ch = p.get('ch');
+      if (ch) pendingChallenge = { seed: ch, target: p.get('s') ? parseInt(p.get('s'), 10) : null, by: p.get('by') ? decodeURIComponent(p.get('by')) : '' };
+    } catch (e) {}
+  })();
+
+  function showToast(msg) {
+    setState({ toastMsg: msg });
+    setTimeout(function () { setState({ toastMsg: '' }); }, 2000);
+  }
 
   // Seeded PRNG (xfnv1a hash → mulberry32) — deck ของ seed เดียวกันจะ identical ทุกเครื่อง
   function makeRng(seedStr) {
@@ -268,6 +288,53 @@
     startTimer();
   }
 
+  // ท้าเพื่อน: seed → เด็คเดียวกันทุกเครื่อง; target = คะแนนที่ต้องเอาชนะ (null = ผู้สร้างคำท้า)
+  function startChallenge(seed, target, by) {
+    if (!allQuestions().length) return;
+    seed = seed || Math.random().toString(36).slice(2, 8);
+    clearTimer();
+    playSound('click');
+    var rng = makeRng('ch-' + seed);
+    setState(Object.assign({}, createInitialGameState(), {
+      mode: 'challenge', screen: 'question', qEnter: false, deck: buildDeck(rng),
+      challengeSeed: seed,
+      challengeTarget: (typeof target === 'number' && !isNaN(target)) ? target : null,
+      challengeBy: by || '',
+    }));
+    setTimeout(function () { setState({ qEnter: true }); }, 30);
+    startTimer();
+  }
+
+  function acceptChallenge() {
+    if (!pendingChallenge) return;
+    var c = pendingChallenge;
+    pendingChallenge = null;
+    try { history.replaceState(null, '', location.origin + location.pathname); } catch (e) {}
+    startChallenge(c.seed, c.target, c.by);
+  }
+
+  function buildChallengeUrl(seed, score, by) {
+    var u = location.origin + location.pathname + '?ch=' + encodeURIComponent(seed) + '&s=' + score;
+    if (by) u += '&by=' + encodeURIComponent(by);
+    return u;
+  }
+
+  function shareChallenge() {
+    var input = document.getElementById('challenge-name');
+    var name = input ? input.value.trim().slice(0, 20) : '';
+    var store = loadStore();
+    if (name) { store.name = name; saveStore(store); }
+    var url = buildChallengeUrl(state.challengeSeed, state.score, name);
+    var text = (name || 'ฉัน') + ' ท้าคุณ! ทำคะแนนให้ชนะ ' + state.score + ' คะแนน ในเกม Trivia จับเวลา 🥊\n' + url;
+    if (navigator.share) {
+      navigator.share({ title: 'Trivia จับเวลา', text: text, url: url }).catch(function () {});
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(function () { showToast('คัดลอกลิงก์คำท้าแล้ว! 🥊'); }).catch(function () {});
+    } else {
+      showToast(url);
+    }
+  }
+
   function selectCategory(catId) {
     var cat = CATEGORIES.filter(function (c) { return c.id === catId; })[0];
     if (!cat || cat.locked) return;
@@ -349,10 +416,7 @@
     if (navigator.share) {
       navigator.share({ title: 'Timed Trivia', text: text }).catch(function () {});
     } else if (navigator.clipboard) {
-      navigator.clipboard.writeText(text).then(function () {
-        setState({ shareToast: true });
-        setTimeout(function () { setState({ shareToast: false }); }, 2000);
-      }).catch(function () {});
+      navigator.clipboard.writeText(text).then(function () { showToast('คัดลอกคะแนนแล้ว! 📋'); }).catch(function () {});
     }
   }
 
@@ -375,7 +439,15 @@
         '</div>'
       : '';
 
-    var dailyLabel = dailyDoneToday ? '✓ ทำแล้ววันนี้ · เล่นซ้ำได้' : 'ชาเลนจ์ประจำวัน 📅';
+    var dailyLabel = dailyDoneToday ? '✓ เล่นแล้ววันนี้ 📅' : 'ชาเลนจ์ประจำวัน 📅';
+
+    var challengeBannerHtml = pendingChallenge
+      ? '<div style="background:linear-gradient(135deg,#fff0f6,#ffe1ef);border:2px solid #ff8bc4;border-radius:20px;padding:clamp(14px,3.6vw,18px);text-align:center;box-shadow:0 6px 0 rgba(214,64,143,.12)">' +
+          '<div class="heading" style="font-size:clamp(15px,4vw,18px);color:#d6408f">⚔️ ' + esc(pendingChallenge.by || 'เพื่อนของคุณ') + ' ท้าคุณ!</div>' +
+          (pendingChallenge.target != null ? '<div style="font-size:clamp(12.5px,3.2vw,14px);color:#8b5cf6;margin-top:4px">ทำคะแนนให้เกิน ' + pendingChallenge.target + ' คะแนน</div>' : '') +
+          '<div class="start-btn clickable btn-primary" data-action="accept-challenge" style="margin-top:12px">รับคำท้า 🥊</div>' +
+        '</div>'
+      : '';
 
     var catsHtml = CATEGORIES.map(function (c) {
       var isSelected = c.id === state.category;
@@ -400,10 +472,14 @@
           '<div style="font-size:clamp(13px,3.4vw,15px);color:#6b5c7f;margin-top:6px">ตอบให้ไว ได้คะแนนเยอะ!</div>' +
           streakHtml +
         '</div>' +
+        challengeBannerHtml +
         '<div class="heading" style="font-weight:600;font-size:clamp(13px,3.4vw,15px);color:#6b5c7f">เลือกหมวดหมู่</div>' +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:clamp(10px,2.6vw,14px)">' + catsHtml + '</div>' +
         '<div class="start-btn clickable btn-primary" data-action="start">เริ่มเกม 🚀</div>' +
-        '<div class="action-btn clickable btn-primary" data-action="start-daily" style="color:#ff7a00;font-weight:700">' + dailyLabel + '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:clamp(10px,2.6vw,14px)">' +
+          '<div class="action-btn clickable btn-primary" data-action="start-daily" style="color:#ff7a00;font-weight:700">' + dailyLabel + '</div>' +
+          '<div class="action-btn clickable btn-primary" data-action="start-challenge" style="color:#d6408f;font-weight:700">ท้าเพื่อน 🥊</div>' +
+        '</div>' +
       '</div>'
     );
   }
@@ -500,13 +576,44 @@
     }
 
     var isDaily = state.mode === 'daily';
-    var headTitle = isDaily ? 'ชาเลนจ์ประจำวัน 🗓️' : 'สรุปผล!';
+    var isChallenge = state.mode === 'challenge';
+    var headTitle = isChallenge ? 'คำท้า! 🥊' : isDaily ? 'ชาเลนจ์ประจำวัน 🗓️' : 'สรุปผล!';
     var streakCardHtml = isDaily && state.dailyStreak
       ? '<div class="summary-stat" style="background:linear-gradient(135deg,#fff4e6,#ffe8cc)">' +
           '<div class="heading" style="font-size:clamp(18px,4.6vw,22px);color:#ff7a00">🔥 ' + state.dailyStreak + ' วัน</div>' +
           '<div style="font-size:clamp(11px,2.8vw,12px);color:#b06a1e">สตรีคต่อเนื่อง</div>' +
         '</div>'
       : '';
+
+    // ผลการท้า (เฉพาะผู้รับคำท้าที่มี target)
+    var challengeResultHtml = '';
+    if (isChallenge && state.challengeTarget != null) {
+      var won = state.score > state.challengeTarget;
+      var tie = state.score === state.challengeTarget;
+      var label = won ? '🎉 คุณชนะ!' : tie ? '🤝 เสมอ!' : '😤 ยังแพ้ ลองใหม่!';
+      var bg = won ? 'linear-gradient(135deg,#d1fae5,#a7f3d0)' : tie ? 'linear-gradient(135deg,#f4f1fa,#e9e3f5)' : 'linear-gradient(135deg,#ffe4e6,#fecdd3)';
+      var col = won ? '#059669' : tie ? '#6b5c7f' : '#e11d48';
+      challengeResultHtml =
+        '<div style="border-radius:20px;padding:clamp(14px,3.6vw,18px);text-align:center;background:' + bg + ';box-shadow:0 6px 0 rgba(0,0,0,.05)">' +
+          '<div class="heading" style="font-size:clamp(18px,4.8vw,22px);color:' + col + '">' + label + '</div>' +
+          '<div style="font-size:clamp(12px,3.2vw,13.5px);color:#6b5c7f;margin-top:4px">🎯 ต้องเอาชนะ ' + state.challengeTarget + ' · คุณได้ ' + state.score + '</div>' +
+        '</div>';
+    }
+
+    // บล็อกปุ่มล่าง: โหมด challenge = ช่องใส่ชื่อ + แชร์คำท้า, โหมดอื่น = แชร์คะแนน
+    var savedName = (loadStore().name || '');
+    var actionsHtml = isChallenge
+      ? '<div class="restart-btn clickable btn-primary" data-action="restart">เล่นเกมอื่น 🏠</div>' +
+        '<input id="challenge-name" class="name-input" type="text" maxlength="20" placeholder="ใส่ชื่อคุณ (ไม่บังคับ)" value="' + esc(savedName) + '">' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+          '<div class="action-btn clickable btn-primary" data-action="share-challenge" style="color:#d6408f;font-weight:700">แชร์คำท้า 🥊</div>' +
+          '<div class="action-btn clickable btn-primary" data-action="toggle-review" style="color:#2dd4bf">ดูเฉลย 📋</div>' +
+        '</div>'
+      : '<div class="restart-btn clickable btn-primary" data-action="restart">เล่นอีกครั้ง 🔁</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+          '<div class="action-btn clickable btn-primary" data-action="share" style="color:#8b5cf6">แชร์คะแนน 📤</div>' +
+          '<div class="action-btn clickable btn-primary" data-action="toggle-review" style="color:#2dd4bf">ดูเฉลย 📋</div>' +
+        '</div>';
 
     return (
       '<div style="display:flex;flex-direction:column;gap:clamp(10px,2.6vw,14px)">' +
@@ -515,6 +622,7 @@
           '<div class="heading" style="font-size:clamp(20px,5vw,24px);color:#d6408f;margin-top:4px">' + headTitle + '</div>' +
         '</div>' +
         streakCardHtml +
+        challengeResultHtml +
         '<div class="summary-score">' +
           '<div class="heading" style="font-size:clamp(34px,9vw,44px);color:#ff5da2">' + state.score + '</div>' +
           '<div style="font-size:clamp(12px,3vw,13px);color:#8b7a9e;margin-top:2px">คะแนนรวม</div>' +
@@ -530,11 +638,7 @@
           '</div>' +
         '</div>' +
         '<div style="display:flex;flex-direction:column;gap:10px;margin-top:2px">' +
-          '<div class="restart-btn clickable btn-primary" data-action="restart">เล่นอีกครั้ง 🔁</div>' +
-          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
-            '<div class="action-btn clickable btn-primary" data-action="share" style="color:#8b5cf6">แชร์คะแนน 📤</div>' +
-            '<div class="action-btn clickable btn-primary" data-action="toggle-review" style="color:#2dd4bf">ดูเฉลย 📋</div>' +
-          '</div>' +
+          actionsHtml +
         '</div>' +
         reviewHtml +
       '</div>'
@@ -546,8 +650,8 @@
       : state.screen === 'question' ? renderQuestion()
       : renderSummary();
 
-    var toastHtml = state.shareToast
-      ? '<div class="toast"><div class="toast-inner">คัดลอกคะแนนแล้ว! 📋</div></div>'
+    var toastHtml = state.toastMsg
+      ? '<div class="toast"><div class="toast-inner">' + esc(state.toastMsg) + '</div></div>'
       : '';
 
     document.getElementById('app').innerHTML =
@@ -560,10 +664,13 @@
     var action = el.getAttribute('data-action');
     if (action === 'start') startGame();
     else if (action === 'start-daily') startDaily();
+    else if (action === 'start-challenge') startChallenge();
+    else if (action === 'accept-challenge') acceptChallenge();
     else if (action === 'select-category') selectCategory(el.getAttribute('data-cat'));
     else if (action === 'answer') handleAnswer(parseInt(el.getAttribute('data-index'), 10));
     else if (action === 'restart') restart();
     else if (action === 'share') shareScore();
+    else if (action === 'share-challenge') shareChallenge();
     else if (action === 'toggle-review') toggleReview();
   });
 
