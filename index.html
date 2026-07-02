@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Trivia จับเวลา</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mitr:wght@400;500;600;700&family=Sarabun:wght@400;500;600;700&display=swap">
+<style>
+  :root{color-scheme:light}
+  *{box-sizing:border-box}
+  body{margin:0}
+  #app{
+    min-height:100dvh;width:100%;
+    background:linear-gradient(160deg,#ffe1ef 0%,#efe3ff 55%,#dcfbef 100%);
+    display:flex;align-items:center;justify-content:center;
+    padding:clamp(16px,4vw,32px);
+    font-family:'Sarabun',sans-serif;color:#3d2c52;
+  }
+  .wrap{width:100%;max-width:440px;display:flex;flex-direction:column;gap:clamp(12px,3vw,18px);position:relative}
+
+  @keyframes bounceIn{0%{transform:scale(.3) rotate(-8deg);opacity:0}55%{transform:scale(1.08) rotate(2deg)}100%{transform:scale(1) rotate(0);opacity:1}}
+  @keyframes urgentPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+  @keyframes slideUpFade{0%{opacity:0;transform:translateY(16px)}100%{opacity:1;transform:translateY(0)}}
+
+  .heading{font-family:'Mitr',sans-serif;font-weight:700}
+
+  .clickable{cursor:pointer;transition:transform .15s ease}
+  .clickable:hover{transform:scale(1.03)}
+  .btn-primary:hover{transform:scale(1.02)}
+
+  .cat-card{position:relative;border-radius:20px;padding:clamp(14px,3.6vw,20px) 8px;text-align:center;background:#fff;box-shadow:0 6px 0 rgba(0,0,0,.06)}
+  .cat-badge{position:absolute;top:-6px;right:-6px;background:#3d2c52;color:#fff;font-size:10px;padding:3px 7px;border-radius:8px;font-family:'Mitr',sans-serif}
+
+  .start-btn{background:linear-gradient(135deg,#ff5da2,#ff8bc4);color:#fff;text-align:center;padding:clamp(16px,4vw,20px);border-radius:20px;font-family:'Mitr',sans-serif;font-weight:700;font-size:clamp(16px,4.2vw,19px);box-shadow:0 8px 0 #d6408f}
+
+  .q-card{background:#fff;border-radius:20px;padding:clamp(16px,4vw,20px);font-family:'Mitr',sans-serif;font-weight:600;font-size:clamp(15px,3.8vw,17px);text-align:center;color:#3d2c52;box-shadow:0 6px 0 rgba(0,0,0,.05);min-height:60px;display:flex;align-items:center;justify-content:center;transition:opacity .32s ease, transform .32s ease}
+  .opt-grid{transition:opacity .32s ease, transform .32s ease}
+  .opt-card{border-radius:16px;padding:clamp(14px,3.6vw,20px) 8px;text-align:center;font-family:'Sarabun',sans-serif;font-weight:600;font-size:clamp(13px,3.4vw,15px);box-shadow:0 5px 0 rgba(0,0,0,.06);transition:background .2s,color .2s,transform .15s ease}
+
+  .banner{animation:bounceIn .4s ease;font-family:'Mitr',sans-serif;font-weight:700;font-size:clamp(13px,3.4vw,15px);padding:10px 18px;border-radius:16px;text-align:center;max-width:100%}
+
+  .summary-score{background:#fff;border-radius:20px;padding:clamp(18px,4.6vw,24px);text-align:center;box-shadow:0 6px 0 rgba(0,0,0,.05)}
+  .summary-stat{background:#fff;border-radius:16px;padding:clamp(12px,3vw,16px);text-align:center;box-shadow:0 5px 0 rgba(0,0,0,.05)}
+  .restart-btn{background:linear-gradient(135deg,#ff5da2,#ff8bc4);color:#fff;text-align:center;padding:clamp(14px,3.4vw,16px);border-radius:16px;font-family:'Mitr',sans-serif;font-weight:700;font-size:clamp(14px,3.6vw,15.5px);box-shadow:0 6px 0 #d6408f}
+  .action-btn{background:#fff;text-align:center;padding:clamp(12px,3vw,14px);border-radius:16px;font-family:'Mitr',sans-serif;font-weight:600;font-size:clamp(12.5px,3.2vw,14px);box-shadow:0 5px 0 rgba(0,0,0,.05)}
+  .review-item{background:#fff;border-radius:14px;padding:12px 14px;font-size:clamp(11.5px,3vw,13px);color:#3d2c52}
+
+  .toast{position:fixed;left:0;right:0;bottom:24px;display:flex;justify-content:center;animation:bounceIn .3s ease;pointer-events:none}
+  .toast-inner{background:#3d2c52;color:#fff;padding:10px 20px;border-radius:14px;font-size:13px;font-family:'Mitr',sans-serif}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="./data/questions.general.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var TIME_PER_Q = 10000;
+  var RING_R = 42;
+  var RING_C = 2 * Math.PI * RING_R;
+
+  var CATEGORIES = [
+    { id: 'general', name: 'ความรู้ทั่วไป', icon: '🧠', locked: false },
+    { id: 'sports', name: 'กีฬา', icon: '⚽', locked: true },
+    { id: 'entertainment', name: 'บันเทิง', icon: '🎬', locked: true },
+    { id: 'science', name: 'วิทยาศาสตร์', icon: '🔬', locked: true },
+  ];
+
+  // จำนวนคำถามต่อหนึ่งเกม (สุ่มจากคลังของหมวดที่เลือก)
+  var QUESTIONS_PER_GAME = 10;
+
+  // คลังคำถามโหลดจาก data/questions.<category>.js ผ่าน <script src> (ดู ADR-001)
+  function questionBank(catId) {
+    var d = window.QUIZ_DATA || {};
+    return (d[catId] && d[catId].questions) || [];
+  }
+
+  var PALETTE = { idleBg: '#ffffff', idleText: '#3d2c52', selectedBg: '#ffd6ea', selectedText: '#d6408f', correctBg: '#34d399', correctText: '#ffffff', wrongBg: '#f87171', wrongText: '#ffffff', dimBg: '#f4f1fa', dimText: '#c3b8d6' };
+
+  function createInitialGameState() {
+    return {
+      screen: 'start',
+      category: 'general',
+      deck: [],
+      qIndex: 0,
+      score: 0,
+      correctCount: 0,
+      answers: [],
+      timeLeft: TIME_PER_Q,
+      selected: null,
+      locked: false,
+      lastGained: null,
+      qEnter: true,
+      reviewOpen: false,
+      shareToast: false,
+    };
+  }
+
+  var state = createInitialGameState();
+  var timer = null;
+  var advanceTimeout = null;
+
+  function setState(patch) {
+    Object.assign(state, typeof patch === 'function' ? patch(state) : patch);
+    render();
+  }
+
+  function clearTimer() {
+    if (timer) { clearInterval(timer); timer = null; }
+    if (advanceTimeout) { clearTimeout(advanceTimeout); advanceTimeout = null; }
+  }
+
+  function computeScore(timeLeft) {
+    var ratio = Math.max(0, Math.min(1, timeLeft / TIME_PER_Q));
+    return Math.round(100 + 100 * ratio);
+  }
+
+  // Fisher–Yates shuffle (คืนอาร์เรย์ใหม่ ไม่แก้ของเดิม)
+  function shuffle(arr) {
+    var a = arr.slice();
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+
+  // สร้างชุดคำถามสำหรับหนึ่งเกม: สุ่มคำถามจากคลังของหมวดที่เลือก + สลับลำดับตัวเลือกในแต่ละข้อ
+  // (คำนวณ correct index ใหม่ตามตำแหน่งที่สลับแล้ว) — เก็บ id ติดไว้ใช้กับ daily challenge/สถิติ
+  function buildDeck() {
+    var bank = questionBank(state.category);
+    var picked = shuffle(bank).slice(0, Math.min(QUESTIONS_PER_GAME, bank.length));
+    return picked.map(function (q) {
+      var correctText = q.options[q.correct];
+      var options = shuffle(q.options);
+      return { id: q.id, text: q.text, options: options, correct: options.indexOf(correctText) };
+    });
+  }
+
+  var audioCtx = null;
+  function getAudioCtx() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!audioCtx) audioCtx = new AC();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+
+  function playTone(freq, start, dur, type, vol) {
+    var ctx = getAudioCtx();
+    if (!ctx) return;
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.type = type || 'sine';
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+    gain.gain.setValueAtTime(vol || 0.15, ctx.currentTime + start);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
+    osc.start(ctx.currentTime + start);
+    osc.stop(ctx.currentTime + start + dur);
+  }
+
+  function playSound(type) {
+    try {
+      if (type === 'correct') {
+        playTone(523.25, 0, 0.18, 'sine', 0.2);
+        playTone(783.99, 0.1, 0.25, 'sine', 0.2);
+      } else if (type === 'wrong') {
+        playTone(220, 0, 0.3, 'sawtooth', 0.15);
+      } else if (type === 'click') {
+        playTone(440, 0, 0.08, 'square', 0.08);
+      } else if (type === 'tick') {
+        playTone(880, 0, 0.05, 'sine', 0.06);
+      } else if (type === 'win') {
+        [523.25, 659.25, 783.99, 1046.5].forEach(function (f, i) { playTone(f, i * 0.12, 0.3, 'sine', 0.18); });
+      }
+    } catch (e) {}
+  }
+
+  // Surgically update only the countdown ring + number. A full render() on
+  // every 100ms tick would rebuild #app's innerHTML 10x/sec, destroying the
+  // option elements between a real click's mousedown and mouseup so the click
+  // never fires. Keeping the option DOM stable during the countdown fixes that.
+  function updateTimerDisplay() {
+    var ring = document.getElementById('timer-ring');
+    var num = document.getElementById('timer-num');
+    if (!ring || !num) return;
+    var dashOffset = RING_C * (1 - state.timeLeft / TIME_PER_Q);
+    var timeLeftSec = Math.ceil(state.timeLeft / 1000);
+    ring.setAttribute('stroke-dashoffset', dashOffset);
+    num.textContent = timeLeftSec;
+    var urgent = !state.locked && timeLeftSec <= 3;
+    num.style.animation = urgent ? 'urgentPulse 0.6s ease-in-out infinite' : 'none';
+  }
+
+  function startTimer() {
+    clearTimer();
+    timer = setInterval(function () {
+      if (state.locked) return;
+      var prevSec = Math.ceil(state.timeLeft / 1000);
+      var nt = Math.max(0, state.timeLeft - 100);
+      var nextSec = Math.ceil(nt / 1000);
+      if (nextSec !== prevSec && nt > 0 && nt <= 3000) playSound('tick');
+      state.timeLeft = nt;
+      if (nt <= 0) {
+        clearInterval(timer);
+        timer = null;
+        handleAnswer(null);
+      } else {
+        updateTimerDisplay();
+      }
+    }, 100);
+  }
+
+  function startGame() {
+    if (!questionBank(state.category).length) return; // ไฟล์ข้อมูลโหลดไม่ติด — อย่าเข้าเกมด้วย deck ว่าง
+    clearTimer();
+    playSound('click');
+    var cat = state.category;
+    setState(Object.assign({}, createInitialGameState(), { category: cat, screen: 'question', qEnter: false, deck: buildDeck() }));
+    setTimeout(function () { setState({ qEnter: true }); }, 30);
+    startTimer();
+  }
+
+  function selectCategory(catId) {
+    var cat = CATEGORIES.filter(function (c) { return c.id === catId; })[0];
+    if (!cat || cat.locked) return;
+    setState({ category: catId });
+  }
+
+  function handleAnswer(optionIndex) {
+    if (state.locked) return;
+    clearTimer();
+    var q = state.deck[state.qIndex];
+    var isCorrect = optionIndex !== null && optionIndex === q.correct;
+    var gained = isCorrect ? computeScore(state.timeLeft) : 0;
+    var timeSpentMs = TIME_PER_Q - state.timeLeft;
+    playSound(isCorrect ? 'correct' : 'wrong');
+    setState(function (s) {
+      return {
+        locked: true,
+        selected: optionIndex,
+        lastGained: gained,
+        score: s.score + gained,
+        correctCount: s.correctCount + (isCorrect ? 1 : 0),
+        answers: s.answers.concat([{ qIndex: s.qIndex, selected: optionIndex, correct: isCorrect, timeMs: timeSpentMs }]),
+      };
+    });
+    advanceTimeout = setTimeout(nextQuestion, 1500);
+  }
+
+  function nextQuestion() {
+    var isLast = state.qIndex >= state.deck.length - 1;
+    if (isLast) {
+      playSound('win');
+      setState({ screen: 'summary' });
+    } else {
+      setState(function (s) {
+        return { qIndex: s.qIndex + 1, selected: null, locked: false, timeLeft: TIME_PER_Q, lastGained: null, qEnter: false };
+      });
+      setTimeout(function () { setState({ qEnter: true }); }, 30);
+      startTimer();
+    }
+  }
+
+  function restart() {
+    clearTimer();
+    setState(createInitialGameState());
+  }
+
+  function toggleReview() {
+    setState(function (s) { return { reviewOpen: !s.reviewOpen }; });
+  }
+
+  function shareScore() {
+    var text = 'ฉันได้ ' + state.score + ' คะแนน ตอบถูก ' + state.correctCount + '/' + state.deck.length + ' ข้อ ในเกม Trivia จับเวลา! 🎉';
+    if (navigator.share) {
+      navigator.share({ title: 'Timed Trivia', text: text }).catch(function () {});
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(function () {
+        setState({ shareToast: true });
+        setTimeout(function () { setState({ shareToast: false }); }, 2000);
+      }).catch(function () {});
+    }
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function renderStart() {
+    var catsHtml = CATEGORIES.map(function (c) {
+      var isSelected = c.id === state.category;
+      var border = isSelected ? '2px solid #d6408f' : '2px solid transparent';
+      var opacity = c.locked ? 0.5 : 1;
+      var badge = c.locked ? '<div class="cat-badge">เร็วๆนี้</div>' : '';
+      return (
+        '<div class="cat-card clickable" data-action="select-category" data-cat="' + c.id + '" ' +
+        'style="opacity:' + opacity + ';border:' + border + '">' +
+        '<div style="font-size:clamp(24px,6vw,30px)">' + c.icon + '</div>' +
+        '<div class="heading" style="font-weight:600;font-size:clamp(12.5px,3.2vw,14px);margin-top:6px;color:#3d2c52">' + esc(c.name) + '</div>' +
+        badge +
+        '</div>'
+      );
+    }).join('');
+
+    return (
+      '<div style="display:flex;flex-direction:column;gap:clamp(14px,3.5vw,20px)">' +
+        '<div style="text-align:center;padding-top:clamp(4px,2vw,12px)">' +
+          '<div style="font-size:clamp(38px,10vw,52px);line-height:1">🎉</div>' +
+          '<div class="heading" style="font-size:clamp(26px,7vw,34px);color:#d6408f;margin-top:8px">Trivia จับเวลา</div>' +
+          '<div style="font-size:clamp(13px,3.4vw,15px);color:#6b5c7f;margin-top:6px">ตอบให้ไว ได้คะแนนเยอะ!</div>' +
+        '</div>' +
+        '<div class="heading" style="font-weight:600;font-size:clamp(13px,3.4vw,15px);color:#6b5c7f">เลือกหมวดหมู่</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:clamp(10px,2.6vw,14px)">' + catsHtml + '</div>' +
+        '<div class="start-btn clickable btn-primary" data-action="start">เริ่มเกม 🚀</div>' +
+      '</div>'
+    );
+  }
+
+  function renderQuestion() {
+    var total = state.deck.length;
+    var qi = Math.min(state.qIndex, total - 1);
+    var q = state.deck[qi];
+    var dashOffset = RING_C * (1 - state.timeLeft / TIME_PER_Q);
+    var timeLeftSec = Math.ceil(state.timeLeft / 1000);
+    var urgent = state.screen === 'question' && !state.locked && timeLeftSec <= 3;
+    var urgentAnim = urgent ? 'urgentPulse 0.6s ease-in-out infinite' : 'none';
+
+    var optsHtml = q.options.map(function (text, i) {
+      var st = 'idle';
+      if (state.locked) {
+        if (i === q.correct) st = 'correct';
+        else if (i === state.selected) st = 'wrong';
+        else st = 'dim';
+      } else if (state.selected === i) {
+        st = 'selected';
+      }
+      var bg = PALETTE.idleBg, txt = PALETTE.idleText;
+      if (st === 'correct') { bg = PALETTE.correctBg; txt = PALETTE.correctText; }
+      else if (st === 'wrong') { bg = PALETTE.wrongBg; txt = PALETTE.wrongText; }
+      else if (st === 'dim') { bg = PALETTE.dimBg; txt = PALETTE.dimText; }
+      else if (st === 'selected') { bg = PALETTE.selectedBg; txt = PALETTE.selectedText; }
+      return (
+        '<div class="opt-card clickable" data-action="answer" data-index="' + i + '" ' +
+        'style="background:' + bg + ';color:' + txt + '">' + esc(text) + '</div>'
+      );
+    }).join('');
+
+    var qEnterOpacity = state.qEnter ? 1 : 0;
+    var qEnterTransform = state.qEnter ? 'translateY(0px)' : 'translateY(14px)';
+
+    var isTimeout = state.locked && state.selected === null;
+    var isAnswerCorrect = state.locked && state.selected !== null && q.correct === state.selected;
+    var bannerBg = isAnswerCorrect ? PALETTE.correctBg : PALETTE.wrongBg;
+    var bannerText = isAnswerCorrect ? PALETTE.correctText : PALETTE.wrongText;
+    var bannerLabel = isTimeout ? ('⏰ หมดเวลา! เฉลย: ' + q.options[q.correct])
+      : isAnswerCorrect ? ('🎉 ถูกต้อง! +' + state.lastGained + ' คะแนน')
+      : ('❌ ยังไม่ถูก เฉลยคือ ' + q.options[q.correct]);
+
+    var feedbackHtml = state.locked
+      ? ('<div style="display:flex;justify-content:center;pointer-events:none">' +
+          '<div class="banner" style="background:' + bannerBg + ';color:' + bannerText + '">' + esc(bannerLabel) + '</div>' +
+        '</div>')
+      : '';
+
+    return (
+      '<div style="display:flex;flex-direction:column;gap:clamp(12px,3vw,18px)">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center">' +
+          '<div class="heading" style="font-weight:600;font-size:clamp(13px,3.2vw,15px);color:#6b5c7f">ข้อ ' + (qi + 1) + '/' + total + '</div>' +
+          '<div class="heading" style="font-size:clamp(15px,3.6vw,17px);color:#d6408f">⭐ ' + state.score + '</div>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:center">' +
+          '<div style="position:relative;width:min(120px,32vw);height:min(120px,32vw)">' +
+            '<svg viewBox="0 0 100 100" style="width:100%;height:100%;transform:rotate(-90deg)">' +
+              '<circle cx="50" cy="50" r="42" fill="none" stroke="#f3e8ff" stroke-width="9"></circle>' +
+              '<circle id="timer-ring" cx="50" cy="50" r="42" fill="none" stroke="#ff5da2" stroke-width="9" stroke-linecap="round" ' +
+                'stroke-dasharray="' + RING_C + '" stroke-dashoffset="' + dashOffset + '"></circle>' +
+            '</svg>' +
+            '<div id="timer-num" class="heading" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(26px,7vw,32px);color:#d6408f;animation:' + urgentAnim + '">' + timeLeftSec + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="q-card" style="opacity:' + qEnterOpacity + ';transform:' + qEnterTransform + '">' + esc(q.text) + '</div>' +
+        '<div class="opt-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:clamp(10px,2.6vw,14px);opacity:' + qEnterOpacity + ';transform:' + qEnterTransform + '">' + optsHtml + '</div>' +
+        feedbackHtml +
+      '</div>'
+    );
+  }
+
+  function renderSummary() {
+    var total = state.deck.length;
+    var answeredCount = state.answers.length;
+    var avgTimeSec = answeredCount ? (state.answers.reduce(function (a, b) { return a + b.timeMs; }, 0) / answeredCount / 1000) : 0;
+
+    var reviewHtml = '';
+    if (state.reviewOpen) {
+      var itemsHtml = state.answers.map(function (a) {
+        var qq = state.deck[a.qIndex];
+        var yourAnswer = a.selected !== null ? qq.options[a.selected] : 'ไม่ได้ตอบ (หมดเวลา)';
+        var icon = a.correct ? '✅' : '❌';
+        return (
+          '<div class="review-item">' +
+            '<div style="font-weight:600;margin-bottom:3px">' + icon + ' ' + (a.qIndex + 1) + '. ' + esc(qq.text) + '</div>' +
+            '<div style="color:#8b7a9e">คำตอบของคุณ: ' + esc(yourAnswer) + '</div>' +
+            '<div style="color:#22c55e">คำตอบที่ถูก: ' + esc(qq.options[qq.correct]) + '</div>' +
+          '</div>'
+        );
+      }).join('');
+      reviewHtml = '<div style="display:flex;flex-direction:column;gap:8px;margin-top:2px;animation:slideUpFade .3s ease">' + itemsHtml + '</div>';
+    }
+
+    return (
+      '<div style="display:flex;flex-direction:column;gap:clamp(10px,2.6vw,14px)">' +
+        '<div style="text-align:center;padding-top:4px;animation:bounceIn .5s ease">' +
+          '<div style="font-size:clamp(40px,10vw,52px)">🏆</div>' +
+          '<div class="heading" style="font-size:clamp(20px,5vw,24px);color:#d6408f;margin-top:4px">สรุปผล!</div>' +
+        '</div>' +
+        '<div class="summary-score">' +
+          '<div class="heading" style="font-size:clamp(34px,9vw,44px);color:#ff5da2">' + state.score + '</div>' +
+          '<div style="font-size:clamp(12px,3vw,13px);color:#8b7a9e;margin-top:2px">คะแนนรวม</div>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:clamp(10px,2.6vw,14px)">' +
+          '<div class="summary-stat">' +
+            '<div class="heading" style="font-size:clamp(18px,4.6vw,22px);color:#3d2c52">' + state.correctCount + '/' + total + '</div>' +
+            '<div style="font-size:clamp(11px,2.8vw,12px);color:#8b7a9e">ตอบถูก</div>' +
+          '</div>' +
+          '<div class="summary-stat">' +
+            '<div class="heading" style="font-size:clamp(18px,4.6vw,22px);color:#3d2c52">' + avgTimeSec.toFixed(1) + 's</div>' +
+            '<div style="font-size:clamp(11px,2.8vw,12px);color:#8b7a9e">เฉลี่ย/ข้อ</div>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;gap:10px;margin-top:2px">' +
+          '<div class="restart-btn clickable btn-primary" data-action="restart">เล่นอีกครั้ง 🔁</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
+            '<div class="action-btn clickable btn-primary" data-action="share" style="color:#8b5cf6">แชร์คะแนน 📤</div>' +
+            '<div class="action-btn clickable btn-primary" data-action="toggle-review" style="color:#2dd4bf">ดูเฉลย 📋</div>' +
+          '</div>' +
+        '</div>' +
+        reviewHtml +
+      '</div>'
+    );
+  }
+
+  function render() {
+    var body = state.screen === 'start' ? renderStart()
+      : state.screen === 'question' ? renderQuestion()
+      : renderSummary();
+
+    var toastHtml = state.shareToast
+      ? '<div class="toast"><div class="toast-inner">คัดลอกคะแนนแล้ว! 📋</div></div>'
+      : '';
+
+    document.getElementById('app').innerHTML =
+      '<div class="wrap">' + body + '</div>' + toastHtml;
+  }
+
+  document.getElementById('app').addEventListener('click', function (e) {
+    var el = e.target.closest('[data-action]');
+    if (!el) return;
+    var action = el.getAttribute('data-action');
+    if (action === 'start') startGame();
+    else if (action === 'select-category') selectCategory(el.getAttribute('data-cat'));
+    else if (action === 'answer') handleAnswer(parseInt(el.getAttribute('data-index'), 10));
+    else if (action === 'restart') restart();
+    else if (action === 'share') shareScore();
+    else if (action === 'toggle-review') toggleReview();
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
