@@ -2,7 +2,7 @@
 // กลยุทธ์: precache app shell แล้วใช้ stale-while-revalidate กับไฟล์ same-origin
 // (เสิร์ฟจาก cache ทันที + อัปเดตเบื้องหลัง → ผู้เล่นได้เวอร์ชันใหม่ในการเปิดครั้งถัดไป)
 // cross-origin (Google Fonts, Supabase) ไม่ intercept — โดยเฉพาะ Supabase ห้าม cache เด็ดขาด
-var CACHE = 'quizdash-v3';
+var CACHE = 'quizdash-v4';
 var PRECACHE = [
   './',
   './index.html',
