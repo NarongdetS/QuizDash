@@ -188,6 +188,42 @@
     }
     return { mode: useSupabase ? 'supabase' : 'local', top: useSupabase ? sbTop : localTop, submit: useSupabase ? sbSubmit : localSubmit };
   })();
+
+  // Analytics adapter — มี posthogKey = ส่งเข้า PostHog, ไม่มี = โหมด console (ตั้ง window.__ANALYTICS_DEBUG=true เพื่อดู log)
+  // ไม่ส่ง PII (ชื่อผู้เล่น) เข้า analytics เด็ดขาด — ส่งแค่ event + ค่าที่ไม่ระบุตัวตน (ดู ANALYTICS-SETUP.md)
+  var Analytics = (function () {
+    var cfg = window.QUIZDASH_CONFIG || {};
+    var key = cfg.posthogKey;
+    var host = (cfg.posthogHost || 'https://us.i.posthog.com').replace(/\/$/, '');
+    var ready = false, ph = null, queue = [];
+    if (key) {
+      var assets = host.replace('.i.posthog.com', '-assets.i.posthog.com');
+      var s = document.createElement('script');
+      s.src = assets + '/static/array.js';
+      s.async = true;
+      s.onload = function () {
+        try {
+          window.posthog.init(key, { api_host: host, capture_pageview: false, autocapture: false, persistence: 'localStorage' });
+          ph = window.posthog; ready = true;
+          queue.forEach(function (e) { try { ph.capture(e.n, e.p); } catch (_) {} });
+          queue = [];
+        } catch (_) {}
+      };
+      s.onerror = function () {};
+      document.head.appendChild(s);
+    }
+    function track(name, props) {
+      if (key) {
+        if (ready && ph) { try { ph.capture(name, props || {}); } catch (_) {} }
+        else { queue.push({ n: name, p: props || {} }); if (queue.length > 100) queue.shift(); }
+      } else if (window.__ANALYTICS_DEBUG) {
+        console.log('[analytics]', name, props || {});
+      }
+    }
+    return { track: track, mode: key ? 'posthog' : 'console' };
+  })();
+  function track(name, props) { Analytics.track(name, props); }
+
   function dateStr(d) { d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   function prevDateStr() { var d = new Date(); d.setDate(d.getDate() - 1); return dateStr(d); }
 
@@ -330,6 +366,7 @@
     clearTimer();
     playSound('click');
     var cat = state.category;
+    track('game_started', { mode: 'normal', category: cat });
     setState(Object.assign({}, createInitialGameState(), { category: cat, mode: 'normal', screen: 'question', qEnter: false, deck: buildDeck() }));
     setTimeout(function () { setState({ qEnter: true }); }, 30);
     startTimer();
@@ -340,6 +377,7 @@
     clearTimer();
     playSound('click');
     var rng = makeRng('daily-' + dateStr()); // seed = วันที่ → ทุกคนได้ชุดเดียวกัน
+    track('game_started', { mode: 'daily' });
     setState(Object.assign({}, createInitialGameState(), { mode: 'daily', screen: 'question', qEnter: false, deck: buildDeck(rng) }));
     setTimeout(function () { setState({ qEnter: true }); }, 30);
     startTimer();
@@ -352,10 +390,12 @@
     clearTimer();
     playSound('click');
     var rng = makeRng('ch-' + seed);
+    var isAccept = (typeof target === 'number' && !isNaN(target));
+    track('game_started', { mode: 'challenge', role: isAccept ? 'accept' : 'create' });
     setState(Object.assign({}, createInitialGameState(), {
       mode: 'challenge', screen: 'question', qEnter: false, deck: buildDeck(rng),
       challengeSeed: seed,
-      challengeTarget: (typeof target === 'number' && !isNaN(target)) ? target : null,
+      challengeTarget: isAccept ? target : null,
       challengeBy: by || '',
     }));
     setTimeout(function () { setState({ qEnter: true }); }, 30);
@@ -382,6 +422,7 @@
     var store = loadStore();
     if (name) { store.name = name; saveStore(store); }
     var url = buildChallengeUrl(state.challengeSeed, state.score, name);
+    track('shared', { type: 'challenge', channel: navigator.share ? 'native' : 'clipboard' });
     var text = (name || 'ฉัน') + ' ท้าคุณ! ทำคะแนนให้ชนะ ' + state.score + ' คะแนน ในเกม Trivia จับเวลา 🥊\n' + url;
     if (navigator.share) {
       navigator.share({ title: 'Trivia จับเวลา', text: text, url: url }).catch(function () {});
@@ -405,6 +446,7 @@
       url = location.origin + location.pathname;
       text = 'ฉันได้ ' + state.score + ' คะแนน ในเกม Trivia จับเวลา! มาลองกัน 🎉';
     }
+    track('shared', { type: state.mode === 'challenge' ? 'challenge' : 'score', channel: 'line' });
     window.open('https://line.me/R/msg/text/?' + encodeURIComponent(text + '\n' + url), '_blank');
   }
 
@@ -459,6 +501,12 @@
       playSound('win');
       var patch = { screen: 'summary' };
       if (state.mode === 'daily') patch.dailyStreak = recordDaily().current;
+      var avgSec = state.answers.length ? +(state.answers.reduce(function (a, b) { return a + b.timeMs; }, 0) / state.answers.length / 1000).toFixed(1) : 0;
+      track('game_finished', { mode: state.mode, category: state.mode === 'normal' ? state.category : state.mode, score: state.score, correct: state.correctCount, total: state.deck.length, avg_time: avgSec });
+      if (state.mode === 'daily') track('daily_completed', { streak: patch.dailyStreak, score: state.score });
+      if (state.mode === 'challenge' && state.challengeTarget != null) {
+        track('challenge_result', { won: state.score > state.challengeTarget, tie: state.score === state.challengeTarget, target: state.challengeTarget, score: state.score });
+      }
       setState(patch);
     } else {
       setState(function (s) {
@@ -479,6 +527,7 @@
   }
 
   function showLeaderboard() {
+    track('leaderboard_viewed', {});
     setState({ screen: 'leaderboard', lbLoading: true, lbError: '', lbEntries: [] });
     Leaderboard.top(20)
       .then(function (list) { setState({ lbLoading: false, lbEntries: list || [] }); })
@@ -493,7 +542,7 @@
     var s = loadStore(); s.name = name; saveStore(s);
     setState({ lbSubmitting: true });
     Leaderboard.submit({ name: name, score: state.score, mode: state.mode, category: state.mode === 'normal' ? state.category : state.mode })
-      .then(function () { setState({ lbSubmitted: true, lbSubmitting: false }); showToast('ส่งขึ้นกระดานแล้ว! 🏆'); })
+      .then(function () { setState({ lbSubmitted: true, lbSubmitting: false }); track('score_submitted', { mode: state.mode, score: state.score }); showToast('ส่งขึ้นกระดานแล้ว! 🏆'); })
       .catch(function () { setState({ lbSubmitting: false }); showToast('ส่งไม่สำเร็จ ลองใหม่'); });
   }
 
@@ -505,6 +554,7 @@
     } else {
       text = 'ฉันได้ ' + state.score + ' คะแนน ตอบถูก ' + state.correctCount + '/' + state.deck.length + ' ข้อ ในเกม Trivia จับเวลา! 🎉';
     }
+    track('shared', { type: 'score', mode: state.mode, channel: navigator.share ? 'native' : 'clipboard' });
     if (navigator.share) {
       navigator.share({ title: 'Timed Trivia', text: text }).catch(function () {});
     } else if (navigator.clipboard) {
@@ -810,6 +860,8 @@
   });
 
   render();
+
+  track('app_opened', { via_challenge: !!pendingChallenge, standalone: !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) });
 
   // ลงทะเบียน service worker (PWA) — path สัมพัทธ์เพื่อรองรับ subpath /QuizDash/ บน GitHub Pages
   if ('serviceWorker' in navigator) {
