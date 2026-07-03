@@ -361,7 +361,7 @@
     osc.stop(ctx.currentTime + start + dur);
   }
 
-  function playSound(type) {
+  function playSound(type, arg) {
     try {
       if (type === 'correct') {
         playTone(523.25, 0, 0.18, 'sine', 0.2);
@@ -371,7 +371,9 @@
       } else if (type === 'click') {
         playTone(440, 0, 0.08, 'square', 0.08);
       } else if (type === 'tick') {
-        playTone(880, 0, 0.05, 'sine', 0.06);
+        // สลับเสียงสูง/ต่ำ (tick/tock) ตามวินาทีคู่-คี่ที่เหลือ + square wave ให้ฟังดูเป็นนาฬิกาจริงกว่า sine เดิม
+        var isTock = arg % 2 === 0;
+        playTone(isTock ? 700 : 1050, 0, 0.045, 'square', 0.05);
       } else if (type === 'win') {
         [523.25, 659.25, 783.99, 1046.5].forEach(function (f, i) { playTone(f, i * 0.12, 0.3, 'sine', 0.18); });
       }
@@ -401,7 +403,7 @@
       var prevSec = Math.ceil(state.timeLeft / 1000);
       var nt = Math.max(0, state.timeLeft - 100);
       var nextSec = Math.ceil(nt / 1000);
-      if (nextSec !== prevSec && nt > 0 && nt <= 3000) playSound('tick');
+      if (nextSec !== prevSec && nt > 0 && nt <= 3000) playSound('tick', nextSec);
       state.timeLeft = nt;
       if (nt <= 0) {
         clearInterval(timer);
