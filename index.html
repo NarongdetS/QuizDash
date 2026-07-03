@@ -170,6 +170,8 @@
       lbEntries: [],
       lbError: '',
       newAchievements: [],
+      difficulty: 1,
+      totalQuestions: QUESTIONS_PER_GAME,
     };
   }
 
@@ -320,6 +322,21 @@
     });
   }
 
+  // เลือกคำถามถัดไปแบบ adaptive (เฉพาะโหมด normal): หาในระดับที่ต้องการก่อน ไม่มีให้ขยับไปใกล้เคียง กันซ้ำด้วย usedIds
+  function pickAdaptiveQuestion(catId, difficulty, usedIds) {
+    var bank = questionBank(catId).filter(function (q) { return usedIds.indexOf(q.id) === -1; });
+    var order = difficulty <= 1 ? [1, 2, 3] : difficulty >= 3 ? [3, 2, 1] : [2, 1, 3];
+    var pool = [];
+    for (var i = 0; i < order.length && !pool.length; i++) {
+      pool = bank.filter(function (q) { return q.difficulty === order[i]; });
+    }
+    if (!pool.length) pool = bank;
+    var picked = pool[Math.floor(Math.random() * pool.length)];
+    var correctText = picked.options[picked.correct];
+    var options = shuffle(picked.options);
+    return { id: picked.id, text: picked.text, options: options, correct: options.indexOf(correctText) };
+  }
+
   var audioCtx = null;
   function getAudioCtx() {
     var AC = window.AudioContext || window.webkitAudioContext;
@@ -397,12 +414,18 @@
   }
 
   function startGame() {
-    if (!questionBank(state.category).length) return; // ไฟล์ข้อมูลโหลดไม่ติด — อย่าเข้าเกมด้วย deck ว่าง
+    var bank = questionBank(state.category);
+    if (!bank.length) return; // ไฟล์ข้อมูลโหลดไม่ติด — อย่าเข้าเกมด้วย deck ว่าง
     clearTimer();
     playSound('click');
     var cat = state.category;
     track('game_started', { mode: 'normal', category: cat });
-    setState(Object.assign({}, createInitialGameState(), { category: cat, mode: 'normal', screen: 'question', qEnter: false, deck: buildDeck() }));
+    var total = Math.min(QUESTIONS_PER_GAME, bank.length);
+    var firstQ = pickAdaptiveQuestion(cat, 1, []);
+    setState(Object.assign({}, createInitialGameState(), {
+      category: cat, mode: 'normal', screen: 'question', qEnter: false,
+      deck: [firstQ], difficulty: 1, totalQuestions: total,
+    }));
     setTimeout(function () { setState({ qEnter: true }); }, 30);
     startTimer();
   }
@@ -413,7 +436,8 @@
     playSound('click');
     var rng = makeRng('daily-' + dateStr()); // seed = วันที่ → ทุกคนได้ชุดเดียวกัน
     track('game_started', { mode: 'daily' });
-    setState(Object.assign({}, createInitialGameState(), { mode: 'daily', screen: 'question', qEnter: false, deck: buildDeck(rng) }));
+    var deck = buildDeck(rng);
+    setState(Object.assign({}, createInitialGameState(), { mode: 'daily', screen: 'question', qEnter: false, deck: deck, totalQuestions: deck.length }));
     setTimeout(function () { setState({ qEnter: true }); }, 30);
     startTimer();
   }
@@ -427,8 +451,9 @@
     var rng = makeRng('ch-' + seed);
     var isAccept = (typeof target === 'number' && !isNaN(target));
     track('game_started', { mode: 'challenge', role: isAccept ? 'accept' : 'create' });
+    var deck = buildDeck(rng);
     setState(Object.assign({}, createInitialGameState(), {
-      mode: 'challenge', screen: 'question', qEnter: false, deck: buildDeck(rng),
+      mode: 'challenge', screen: 'question', qEnter: false, deck: deck, totalQuestions: deck.length,
       challengeSeed: seed,
       challengeTarget: isAccept ? target : null,
       challengeBy: by || '',
@@ -500,7 +525,7 @@
     var timeSpentMs = TIME_PER_Q - state.timeLeft;
     playSound(isCorrect ? 'correct' : 'wrong');
     setState(function (s) {
-      return {
+      var patch = {
         locked: true,
         selected: optionIndex,
         lastGained: gained,
@@ -508,6 +533,10 @@
         correctCount: s.correctCount + (isCorrect ? 1 : 0),
         answers: s.answers.concat([{ qIndex: s.qIndex, selected: optionIndex, correct: isCorrect, timeMs: timeSpentMs }]),
       };
+      if (s.mode === 'normal') {
+        patch.difficulty = isCorrect ? Math.min(3, s.difficulty + 1) : Math.max(1, s.difficulty - 1);
+      }
+      return patch;
     });
     advanceTimeout = setTimeout(nextQuestion, 1500);
   }
@@ -562,7 +591,7 @@
   }
 
   function nextQuestion() {
-    var isLast = state.qIndex >= state.deck.length - 1;
+    var isLast = state.qIndex >= state.totalQuestions - 1;
     if (isLast) {
       playSound('win');
       var patch = { screen: 'summary' };
@@ -580,7 +609,12 @@
       setState(patch);
     } else {
       setState(function (s) {
-        return { qIndex: s.qIndex + 1, selected: null, locked: false, timeLeft: TIME_PER_Q, lastGained: null, qEnter: false };
+        var patch = { qIndex: s.qIndex + 1, selected: null, locked: false, timeLeft: TIME_PER_Q, lastGained: null, qEnter: false };
+        if (s.mode === 'normal') {
+          var usedIds = s.deck.map(function (d) { return d.id; });
+          patch.deck = s.deck.concat([pickAdaptiveQuestion(s.category, s.difficulty, usedIds)]);
+        }
+        return patch;
       });
       setTimeout(function () { setState({ qEnter: true }); }, 30);
       startTimer();
@@ -703,7 +737,7 @@
   }
 
   function renderQuestion() {
-    var total = state.deck.length;
+    var total = state.totalQuestions;
     var qi = Math.min(state.qIndex, total - 1);
     var q = state.deck[qi];
     var dashOffset = RING_C * (1 - state.timeLeft / TIME_PER_Q);
@@ -772,7 +806,7 @@
   }
 
   function renderSummary() {
-    var total = state.deck.length;
+    var total = state.totalQuestions;
     var answeredCount = state.answers.length;
     var avgTimeSec = answeredCount ? (state.answers.reduce(function (a, b) { return a + b.timeMs; }, 0) / answeredCount / 1000) : 0;
 
