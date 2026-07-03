@@ -3,7 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Trivia จับเวลา</title>
+<title>Trivia จับเวลา — เกมทายคำถามจับเวลา</title>
+<meta name="description" content="ตอบให้ไว ได้คะแนนเยอะ! เกมทายคำถามจับเวลา ท้าเพื่อน ไต่กระดานอันดับ เล่นฟรีบนเว็บ">
+<!-- Open Graph / LINE / Facebook -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Trivia จับเวลา">
+<meta property="og:title" content="Trivia จับเวลา — เกมทายคำถามจับเวลา">
+<meta property="og:description" content="ตอบให้ไว ได้คะแนนเยอะ! ท้าเพื่อน ไต่กระดานอันดับ เล่นฟรีบนเว็บ 🎉">
+<meta property="og:url" content="https://narongdets.github.io/QuizDash/">
+<meta property="og:image" content="https://narongdets.github.io/QuizDash/og-cover.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:locale" content="th_TH">
+<!-- Twitter/X -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Trivia จับเวลา — เกมทายคำถามจับเวลา">
+<meta name="twitter:description" content="ตอบให้ไว ได้คะแนนเยอะ! ท้าเพื่อน ไต่กระดานอันดับ เล่นฟรีบนเว็บ 🎉">
+<meta name="twitter:image" content="https://narongdets.github.io/QuizDash/og-cover.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mitr:wght@400;500;600;700&family=Sarabun:wght@400;500;600;700&display=swap">
 <style>
@@ -368,6 +384,22 @@
     }
   }
 
+  // แชร์เข้า LINE โดยตรง — LINE จะ unfurl ลิงก์เป็น preview การ์ด (จาก OG tags) พร้อมข้อความคะแนน
+  function shareLine() {
+    var url, text;
+    if (state.mode === 'challenge') {
+      var input = document.getElementById('player-name');
+      var name = input ? input.value.trim().slice(0, 20) : '';
+      if (name) { var s = loadStore(); s.name = name; saveStore(s); }
+      url = buildChallengeUrl(state.challengeSeed, state.score, name);
+      text = (name || 'ฉัน') + ' ท้าคุณ! ทำคะแนนให้ชนะ ' + state.score + ' คะแนน ในเกม Trivia จับเวลา 🥊';
+    } else {
+      url = location.origin + location.pathname;
+      text = 'ฉันได้ ' + state.score + ' คะแนน ในเกม Trivia จับเวลา! มาลองกัน 🎉';
+    }
+    window.open('https://line.me/R/msg/text/?' + encodeURIComponent(text + '\n' + url), '_blank');
+  }
+
   function selectCategory(catId) {
     var cat = CATEGORIES.filter(function (c) { return c.id === catId; })[0];
     if (!cat || cat.locked) return;
@@ -664,9 +696,10 @@
       ? '<div class="action-btn clickable btn-primary" data-action="share-challenge" style="color:#d6408f;font-weight:700">แชร์คำท้า 🥊</div>'
       : '<div class="action-btn clickable btn-primary" data-action="share" style="color:#8b5cf6">แชร์คะแนน 📤</div>';
     var reviewBtn = '<div class="action-btn clickable btn-primary" data-action="toggle-review" style="color:#2dd4bf">ดูเฉลย 📋</div>';
+    var lineBtn = '<div class="action-btn clickable btn-primary" data-action="share-line" style="color:#06c755;font-weight:700">แชร์เข้า LINE 💬</div>';
     var actionsHtml = restartBtn + nameInputHtml +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' + submitBtn + shareBtn + '</div>' +
-      reviewBtn;
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' + lineBtn + reviewBtn + '</div>';
 
     return (
       '<div style="display:flex;flex-direction:column;gap:clamp(10px,2.6vw,14px)">' +
@@ -764,6 +797,7 @@
     else if (action === 'submit-score') submitScore();
     else if (action === 'share') shareScore();
     else if (action === 'share-challenge') shareChallenge();
+    else if (action === 'share-line') shareLine();
     else if (action === 'toggle-review') toggleReview();
   });
 
