@@ -533,9 +533,10 @@
   // บันทึกสถิติสะสมทุกโหมด (ต้องเรียกหลัง recordDaily เพื่อไม่ทับกัน)
   function recordGame(ctx) {
     var store = loadStore();
-    var st = store.stats || { gamesPlayed: 0, totalCorrect: 0, bestScore: 0 };
+    var st = store.stats || { gamesPlayed: 0, totalCorrect: 0, totalQuestions: 0, bestScore: 0 };
     st.gamesPlayed = (st.gamesPlayed || 0) + 1;
     st.totalCorrect = (st.totalCorrect || 0) + ctx.correct;
+    st.totalQuestions = (st.totalQuestions || 0) + ctx.total;
     st.bestScore = Math.max(st.bestScore || 0, ctx.score);
     store.stats = st;
     saveStore(store);
@@ -696,6 +697,7 @@
           '<div class="action-btn clickable btn-primary" data-action="show-leaderboard" style="color:#f59e0b;font-weight:700">อันดับ 🏆</div>' +
           '<div class="action-btn clickable btn-primary" data-action="show-achievements" style="color:#c07a00;font-weight:700">ความสำเร็จ 🏅 ' + achUnlocked + '/' + ACHIEVEMENTS.length + '</div>' +
         '</div>' +
+        '<div class="action-btn clickable btn-primary" data-action="show-profile" style="color:#8b5cf6;font-weight:700">โปรไฟล์ 👤</div>' +
       '</div>'
     );
   }
@@ -951,11 +953,65 @@
     );
   }
 
+  function renderProfile() {
+    var store = loadStore();
+    var st = store.stats || { gamesPlayed: 0, totalCorrect: 0, totalQuestions: 0, bestScore: 0 };
+    var streak = store.streak || { current: 0, best: 0 };
+    var owned = store.achievements || {};
+    var unlockedCount = ACHIEVEMENTS.filter(function (a) { return owned[a.id]; }).length;
+    // Math.min กันเปอร์เซ็นต์เกิน 100 กรณี store เก่าก่อนมี totalQuestions (totalCorrect สะสมมาก่อนหน้านั้นแล้ว)
+    var accuracyLabel = st.totalQuestions > 0
+      ? Math.min(100, Math.round((st.totalCorrect / st.totalQuestions) * 100)) + '%'
+      : '—';
+
+    var streakCardHtml = (streak.current > 0 || streak.best > 0)
+      ? '<div class="summary-stat" style="background:linear-gradient(135deg,#fff4e6,#ffe8cc)">' +
+          '<div class="heading" style="font-size:clamp(18px,4.6vw,22px);color:#ff7a00">🔥 ' + streak.current + ' วัน</div>' +
+          '<div style="font-size:clamp(11px,2.8vw,12px);color:#b06a1e">สตรีคปัจจุบัน' + (streak.best > streak.current ? ' · สูงสุด ' + streak.best : '') + '</div>' +
+        '</div>'
+      : '';
+
+    return (
+      '<div style="display:flex;flex-direction:column;gap:clamp(10px,2.6vw,14px)">' +
+        '<div style="text-align:center;padding-top:4px">' +
+          '<div style="font-size:clamp(40px,10vw,52px)">👤</div>' +
+          '<div class="heading" style="font-size:clamp(20px,5vw,24px);color:#d6408f;margin-top:4px">โปรไฟล์ของฉัน</div>' +
+          (store.name ? '<div style="font-size:clamp(12.5px,3.2vw,14px);color:#6b5c7f;margin-top:4px">' + esc(store.name) + '</div>' : '') +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:clamp(10px,2.6vw,14px)">' +
+          '<div class="summary-stat">' +
+            '<div class="heading" style="font-size:clamp(18px,4.6vw,22px);color:#3d2c52">' + (st.gamesPlayed || 0) + '</div>' +
+            '<div style="font-size:clamp(11px,2.8vw,12px);color:#8b7a9e">เกมที่เล่น</div>' +
+          '</div>' +
+          '<div class="summary-stat">' +
+            '<div class="heading" style="font-size:clamp(18px,4.6vw,22px);color:#3d2c52">' + (st.bestScore || 0) + '</div>' +
+            '<div style="font-size:clamp(11px,2.8vw,12px);color:#8b7a9e">คะแนนสูงสุด</div>' +
+          '</div>' +
+          '<div class="summary-stat">' +
+            '<div class="heading" style="font-size:clamp(18px,4.6vw,22px);color:#3d2c52">' + (st.totalCorrect || 0) + '</div>' +
+            '<div style="font-size:clamp(11px,2.8vw,12px);color:#8b7a9e">ตอบถูกสะสม</div>' +
+          '</div>' +
+          '<div class="summary-stat">' +
+            '<div class="heading" style="font-size:clamp(18px,4.6vw,22px);color:#3d2c52">' + accuracyLabel + '</div>' +
+            '<div style="font-size:clamp(11px,2.8vw,12px);color:#8b7a9e">ความแม่นยำ</div>' +
+          '</div>' +
+        '</div>' +
+        streakCardHtml +
+        '<div class="clickable" data-action="show-achievements" style="border-radius:16px;padding:clamp(10px,2.6vw,14px);background:linear-gradient(135deg,#fff7db,#ffe9a8);box-shadow:0 5px 0 rgba(0,0,0,.04);text-align:center">' +
+          '<div class="heading" style="font-weight:600;font-size:clamp(13.5px,3.5vw,15px);color:#8a5a00">🏅 ความสำเร็จ ' + unlockedCount + '/' + ACHIEVEMENTS.length + '</div>' +
+          '<div style="font-size:clamp(11px,2.8vw,12.5px);color:#b06a1e;margin-top:2px">แตะเพื่อดูทั้งหมด</div>' +
+        '</div>' +
+        '<div class="restart-btn clickable btn-primary" data-action="restart">← กลับ</div>' +
+      '</div>'
+    );
+  }
+
   function render() {
     var body = state.screen === 'start' ? renderStart()
       : state.screen === 'question' ? renderQuestion()
       : state.screen === 'leaderboard' ? renderLeaderboard()
       : state.screen === 'achievements' ? renderAchievements()
+      : state.screen === 'profile' ? renderProfile()
       : renderSummary();
 
     var toastHtml = state.toastMsg
@@ -979,6 +1035,7 @@
     else if (action === 'restart') restart();
     else if (action === 'show-leaderboard') showLeaderboard();
     else if (action === 'show-achievements') { track('achievements_viewed', {}); setState({ screen: 'achievements' }); }
+    else if (action === 'show-profile') { track('profile_viewed', {}); setState({ screen: 'profile' }); }
     else if (action === 'submit-score') submitScore();
     else if (action === 'share') shareScore();
     else if (action === 'share-challenge') shareChallenge();
