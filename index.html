@@ -20,6 +20,14 @@
 <meta name="twitter:title" content="Trivia จับเวลา — เกมทายคำถามจับเวลา">
 <meta name="twitter:description" content="ตอบให้ไว ได้คะแนนเยอะ! ท้าเพื่อน ไต่กระดานอันดับ เล่นฟรีบนเว็บ 🎉">
 <meta name="twitter:image" content="https://narongdets.github.io/QuizDash/og-cover.png">
+<!-- PWA -->
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#ffe1ef">
+<link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Trivia">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mitr:wght@400;500;600;700&family=Sarabun:wght@400;500;600;700&display=swap">
 <style>
@@ -802,6 +810,13 @@
   });
 
   render();
+
+  // ลงทะเบียน service worker (PWA) — path สัมพัทธ์เพื่อรองรับ subpath /QuizDash/ บน GitHub Pages
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('./sw.js').catch(function () {});
+    });
+  }
 })();
 </script>
 </body>

@@ -1,0 +1,16 @@
+{
+  "name": "Trivia จับเวลา",
+  "short_name": "Trivia",
+  "description": "ตอบให้ไว ได้คะแนนเยอะ! เกมทายคำถามจับเวลา ท้าเพื่อน ไต่กระดานอันดับ",
+  "lang": "th",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffe1ef",
+  "theme_color": "#ffe1ef",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
